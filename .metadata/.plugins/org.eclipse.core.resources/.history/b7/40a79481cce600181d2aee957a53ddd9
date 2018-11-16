@@ -1,0 +1,148 @@
+/*
+ * xbee.c
+ *
+ *  Created on: Oct 20, 2018
+ *      Author: Alex Perera
+ */
+
+
+#include "xbee.h"
+
+volatile packet_t cont_state;
+
+
+
+void XBEE_UART_INIT()
+{
+    const eUSCI_UART_Config config =
+    {
+
+         EUSCI_A_UART_CLOCKSOURCE_SMCLK,                                //         uint_fast8_t selectClockSource;
+         6,                                                             //         uint_fast16_t clockPrescalar;
+         8,                                                             //         uint_fast8_t firstModReg;
+         0x20,                                                          //         uint_fast8_t secondModReg;
+         EUSCI_A_UART_NO_PARITY,                                        //         uint_fast8_t parity;
+         EUSCI_A_UART_LSB_FIRST,                                        //         uint_fast16_t msborLsbFirst;
+         EUSCI_A_UART_ONE_STOP_BIT,                                     //         uint_fast16_t numberofStopBits;
+         EUSCI_A_UART_MODE,                                             //         uint_fast16_t uartMode;
+         EUSCI_A_UART_OVERSAMPLING_BAUDRATE_GENERATION                  //         uint_fast8_t overSampling;
+    };
+
+    UART_initModule(EUSCI_A2_BASE, &config);
+    UART_initModule(EUSCI_A0_BASE, &config);
+    //GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P1, GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);     // For Backchannel UART
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P3, GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);      //TX - Pin 3.3 RX - Pin 3.2
+
+    UART_enableModule(EUSCI_A2_BASE);
+    //UART_enableModule(EUSCI_A0_BASE);
+
+    UART_enableInterrupt(EUSCI_A2_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
+    Interrupt_enableMaster();
+    Interrupt_enableInterrupt(INT_EUSCIA2);
+}
+
+bool XBEE_SEND_BASIC_CONTROLLER_PACKET(basic_packet_t data)
+{
+    EUSCI_A2->TXBUF = START;                                            // Send Start of packet
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = (uint8_t)data.xdir;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = (uint8_t)data.ydir;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = data.buttons;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = END;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+//    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+//    uint8_t ack = EUSCI_A2->RXBUF;
+//
+//    if(ack != ACK)
+//    {
+//        return false;
+//    }
+//    else
+//    {
+//        return true;
+//    }
+    return true;
+}
+
+bool XBEE_SEND_CONTROLLER_STATE(packet_t data)
+{
+    EUSCI_A2->TXBUF = START;                                            // Send Start of packet
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = data.xadc;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = (data.xadc >> 8);
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = data.yadc;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = (data.yadc >> 8);
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = data.buttons;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    EUSCI_A2->TXBUF = END;
+    while(!(EUSCI_A2->IFG & EUSCI_A_IFG_TXIFG));
+
+    return true;
+}
+
+asd
+void EUSCIA2_IRQHandler()
+{
+    uint32_t status = UART_getEnabledInterruptStatus(EUSCI_A2_BASE);
+
+    char start = 0;
+    char end = 0;
+    int16_t xlow = 0;
+    int16_t xhigh = 0;
+    int16_t ylow = 0;
+    int16_t yhigh = 0;
+    uint8_t buttons = 0;
+
+    if(status & EUSCI_A_UART_RECEIVE_INTERRUPT_FLAG)
+    {
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        start = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        xlow = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        xhigh = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        ylow = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        yhigh = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        buttons = EUSCI_A2->RXBUF;
+
+        while(!(EUSCI_A2->IFG & EUSCI_A_IFG_RXIFG));
+        end = EUSCI_A2->RXBUF;
+    }
+
+    if(start == 'S' && end == 'N')
+    {
+        cont_state.buttons = buttons;
+        cont_state.xadc = (int16_t)(xhigh << 8 | xlow);
+        cont_state.yadc = (int16_t)(yhigh << 8 | ylow);
+    }
+
+
+    UART_clearInterruptFlag(EUSCI_A2_BASE, status);
+}
+

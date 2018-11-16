@@ -1,0 +1,97 @@
+/*
+ * controller.c
+ *
+ *  Created on: Oct 24, 2018
+ *      Author: Alex Perera
+ */
+
+#include "controller.h"
+
+
+
+void init_controller(void)
+{
+    LCD_Init(false);
+    LCD_Draw_Menu();
+    Joystick_Init_Without_Interrupt();
+    GPIO_setAsInputPin(GPIO_PORT_P5, GPIO_PIN0 | GPIO_PIN1 | GPIO_PIN2| GPIO_PIN4);
+}
+
+
+basic_packet_t get_basic_controller_state(void)
+{
+    int16_t xcoord, ycoord;
+    basic_packet_t controller_state;
+
+    GetJoystickCoordinates(&xcoord, &ycoord);
+    uint8_t top_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN0);
+    uint8_t right_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN1);
+    uint8_t bottom_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN2);
+    uint8_t left_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN4);
+
+    controller_state.buttons = (top_button << 3) | (right_button << 2) | (bottom_button << 1) | (left_button << 0);
+
+    if(xcoord <= -5000)
+    {
+        controller_state.xdir = left;
+    }
+    else if(xcoord > -5000 && xcoord <= -1000)
+    {
+        controller_state.xdir = left_center;
+    }
+    else if(xcoord > -1000 && xcoord <= 1000)
+    {
+        controller_state.xdir = center_x;
+    }
+    else if(xcoord > 1000 && xcoord <= 5000)
+    {
+        controller_state.xdir = right_center;
+    }
+    else
+    {
+        controller_state.xdir = right;
+    }
+
+    if(ycoord <= -5000)
+    {
+        controller_state.ydir = down;
+    }
+    else if(ycoord > -5000 && ycoord <= -1000)
+    {
+        controller_state.ydir = down_center;
+    }
+    else if(ycoord > -1000 && ycoord <= 1000)
+    {
+        controller_state.ydir = center_y;
+    }
+    else if(ycoord > 1000 && ycoord <= 5000)
+    {
+        controller_state.ydir = up_center;
+    }
+    else
+    {
+        controller_state.ydir = up;
+    }
+
+    return controller_state;
+}
+
+
+packet_t get_controller_state(void)
+{
+    int16_t xcoord, ycoord;
+    GetJoystickCoordinates(&xcoord, &ycoord);
+    uint8_t top_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN0);
+    uint8_t right_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN1);
+    uint8_t bottom_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN2);
+    uint8_t left_button = GPIO_getInputPinValue(GPIO_PORT_P5, GPIO_PIN4);
+
+    packet_t controller_state;
+    controller_state.xadc = xcoord;
+    controller_state.yadc = ycoord;
+
+    controller_state.buttons = (top_button << 3) | (right_button << 2) | (bottom_button << 1) | (left_button << 0);
+
+    return controller_state;
+
+}

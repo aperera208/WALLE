@@ -1,0 +1,88 @@
+/*
+ * bluetooth.c
+ *
+ *  Created on: Oct 16, 2018
+ *      Author: Alex Perera
+ */
+#include "bluetooth.h"
+#include "gpio.h"
+#include "uart.h"
+#include "string.h"
+#include <stdbool.h>
+
+
+bool bluetooth_init()
+{
+    GPIO_setAsOutputPin(GPIO_PORT_P2, GPIO_PIN1 | GPIO_PIN0);
+    GPIO_setOutputHighOnPin(GPIO_PORT_P2, GPIO_PIN0);
+    GPIO_setOutputLowOnPin(GPIO_PORT_P2, GPIO_PIN1);
+
+    const eUSCI_UART_Config config =
+    {
+
+         EUSCI_A_UART_CLOCKSOURCE_SMCLK,                            //         uint_fast8_t selectClockSource;
+         6,        // 6,                                                //         uint_fast16_t clockPrescalar;
+         0x08,                                                         //         uint_fast8_t firstModReg;
+         0x20,        // 0x20,                                             //         uint_fast8_t secondModReg;
+         EUSCI_A_UART_NO_PARITY,                                    //         uint_fast8_t parity;
+         EUSCI_A_UART_LSB_FIRST,                                    //         uint_fast16_t msborLsbFirst;
+         EUSCI_A_UART_ONE_STOP_BIT,                                 //         uint_fast16_t numberofStopBits;
+         EUSCI_A_UART_MODE,                                         //         uint_fast16_t uartMode;
+         EUSCI_A_UART_OVERSAMPLING_BAUDRATE_GENERATION             //         uint_fast8_t overSampling;
+    };
+
+    if(UART_initModule(EUSCI_A1_BASE, &config) == false)
+    {
+        return false;
+    }
+
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P1, GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);
+
+    UART_enableModule(EUSCI_A1_BASE);
+
+    __delay_cycles(48000);
+
+    bluetooth_uart_send(DEV_NAME);
+    bluetooth_uart_send(AUDIO_STREAM);
+    bluetooth_uart_send(MAX_GAIN);
+    bluetooth_uart_send(REBOOT);
+
+    __delay_cycles(48000);
+
+    GPIO_setOutputHighOnPin(GPIO_PORT_P2, GPIO_PIN1);
+
+/*
+    char ret[6];
+    for(int i = 0; i < 6; i++)
+    {
+        ret[i] = bluetooth_uart_receive();
+    }
+
+    if(ret != "reboot")
+    {
+        return false;
+    }
+    else
+    {
+        return true;
+    }
+*/
+
+    return true;
+
+}
+
+
+void bluetooth_uart_send(char * data)
+{
+    int test = strlen(data);
+    for(int i = 0; i < test; i++)
+    {
+        UART_transmitData(EUSCI_A1_BASE, *data++);
+    }
+}
+
+uint8_t bluetooth_uart_receive()
+{
+    return UART_receiveData(EUSCI_A1_BASE);
+}

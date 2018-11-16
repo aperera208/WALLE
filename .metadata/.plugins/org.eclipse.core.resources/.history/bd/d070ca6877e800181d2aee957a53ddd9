@@ -1,0 +1,268 @@
+/*
+ * motor_driver.c
+ *
+ *  Created on: Sep 21, 2018
+ *      Author: Alex Perera
+ */
+
+
+#include "pwm.h"
+#include "timer_a.h"
+#include "gpio.h"
+#include "motor_driver.h"
+#include "controller.h"
+
+
+
+void Motors_Init(void)
+{
+    PWM_INIT_MOTOR(TIMER_A0_BASE, 0, 600, TIMER_A_CAPTURECOMPARE_REGISTER_4, MOTOR_GPIO_PORT, LEFT_FW_GPIO_PIN, GPIO_PRIMARY_MODULE_FUNCTION);
+    PWM_INIT_MOTOR(TIMER_A0_BASE, 0, 600, TIMER_A_CAPTURECOMPARE_REGISTER_3, MOTOR_GPIO_PORT, LEFT_BW_GPIO_PIN, GPIO_PRIMARY_MODULE_FUNCTION);
+    PWM_INIT_MOTOR(TIMER_A0_BASE, 0, 600, TIMER_A_CAPTURECOMPARE_REGISTER_2, MOTOR_GPIO_PORT, RIGHT_FW_GPIO_PIN, GPIO_PRIMARY_MODULE_FUNCTION);
+    PWM_INIT_MOTOR(TIMER_A0_BASE, 0, 600, TIMER_A_CAPTURECOMPARE_REGISTER_1, MOTOR_GPIO_PORT, RIGHT_BW_GPIO_PIN, GPIO_PRIMARY_MODULE_FUNCTION);
+}
+
+void Motor_Stop(uint8_t compareRegister)
+{
+    Stop_Timer(MOTOR_TIMER, compareRegister);
+}
+
+void Motor_Restart(uint8_t compareRegister)
+{
+    Restart_Timer(MOTOR_TIMER, compareRegister);
+}
+
+void Motor_Change_Speed( uint16_t speed, uint8_t reg)
+{
+    MOTOR_TIMER->CCR[reg] = speed;
+}
+
+
+void Motor_Update(packet_t cont_state)
+{
+    uint16_t leftspeed = 0;
+    uint16_t rightspeed = 0;
+    float backspeed = 0;
+    float fwdspeed = 0;
+
+    if(cont_state.yadc < YNEGTHRESH)                                            // If Y is negative, y axis on joystick is down
+    {
+        backspeed = -0.02597f*(float)cont_state.yadc + 287.0f;                  // Linear relationship between adc values and pwm duty 296.3f
+        leftspeed = (uint16_t)backspeed;
+        rightspeed = (uint16_t)backspeed;
+    }
+    else if(cont_state.yadc > YPOSTHRESH)                                       // If Y is positive, y axis on joystick is up
+    {
+        fwdspeed = 0.02597f*(float)cont_state.yadc + 287.0f;                    // Linear relationship between adc values and pwm duty
+        leftspeed = (uint16_t)fwdspeed;
+        rightspeed = (uint16_t)fwdspeed;
+    }
+
+    if(cont_state.xadc < XNEGTHRESH)                                            // If X is negative, x axis on joystick is left
+    {
+        float xleft = -0.02597f*(float)cont_state.xadc + 287.0f;                 // Linear relationship between adc values and pwm duty 310.6f
+        leftspeed += (uint16_t)(xleft);                                           // Decrease left speed
+        rightspeed -= (uint16_t)(xleft);                                          // Increase right speed
+
+        if(rightspeed > 500)                                                    // Make sure right speed isn't over 100% duty cycle
+        {
+            rightspeed = 500;
+        }
+    }
+    else if(cont_state.xadc > XPOSTHRESH)                                       // If X is positive, x axis on joystick is right
+    {
+        float xright = 0.02597f*(float)cont_state.xadc + 287.0f;                 // Linear relationship between adc values and pwm duty
+        leftspeed -= (uint16_t)(xright);                                          // Increase left speed
+        rightspeed += (uint16_t)(xright);                                         // Decrease right speed
+
+        if(leftspeed > 500)                                                     // Make sure left speed isn't over 100% duty cycle
+        {
+            leftspeed = 500;
+        }
+    }
+
+    if(backspeed != 0 )                                                          // Going backwards, control the BW signals for left and right motors
+    {
+        Motor_Change_Speed(0, LEFT_FW_REG);                                     // Turn off the FW signals for left and right motors
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+        Motor_Change_Speed((uint16_t)leftspeed, LEFT_BW_REG);
+        Motor_Change_Speed((uint16_t)rightspeed, RIGHT_BW_REG);
+    }
+    else if(fwdspeed != 0 )                                                      // Going forwards, control the FW signals for left and right motors
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);                                     // Turn off the BW signals for left and right motors
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed((uint16_t)leftspeed, LEFT_FW_REG);
+        Motor_Change_Speed((uint16_t)rightspeed, RIGHT_FW_REG);
+    }
+    else                                                                        // Not moving, set both FW and BW signals for left and right motors to 0
+    {
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+    }
+
+}
+
+void Motor_Update_Thresh(packet_t cont_state)
+{
+    if(cont_state.yadc > 6000 && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)      //Forward 100%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(500, LEFT_FW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < 6000 && cont_state.yadc > 3000  && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)  //Forward 66%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(400, LEFT_FW_REG);
+        Motor_Change_Speed(400, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < 3000 && cont_state.yadc > YPOSTHRESH  && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)    //Forward 33%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(350, LEFT_FW_REG);
+        Motor_Change_Speed(350, RIGHT_FW_REG);
+    }
+
+    else if(cont_state.yadc < -6000 && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)                //Backward 100%
+    {
+        Motor_Change_Speed(500, LEFT_BW_REG);
+        Motor_Change_Speed(500, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > -6000 && cont_state.yadc < -3000 && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)      //Backward 66%
+    {
+        Motor_Change_Speed(400, LEFT_BW_REG);
+        Motor_Change_Speed(400, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > -3000 && cont_state.yadc < YNEGTHRESH && cont_state.xadc < XPOSTHRESH && cont_state.xadc > XNEGTHRESH)     //Backward 33%
+    {
+        Motor_Change_Speed(350, LEFT_BW_REG);
+        Motor_Change_Speed(350, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+    }
+
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc > 6000)                                 // Right 100%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc > 3000 && cont_state.xadc < 6000)                                 // Right 66%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(400, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc > XPOSTHRESH && cont_state.xadc < 3000)                                 // Right 33%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(350, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+    }
+
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc < -6000)                                 // Left 100%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc < -3000 && cont_state.xadc > -6000)                                 // Left 66%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(400, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc < (YPOSTHRESH) && cont_state.yadc > (YNEGTHRESH) && cont_state.xadc < XNEGTHRESH && cont_state.xadc > -3000)                                 // Left 33%
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(350, RIGHT_FW_REG);
+    }
+
+    // Top right
+    else if(cont_state.yadc > 6000 && cont_state.xadc > 6000)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(500, LEFT_FW_REG);
+        Motor_Change_Speed(400, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > 6000 && cont_state.xadc < 6000 && cont_state.xadc > 3000)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(500, LEFT_FW_REG);
+        Motor_Change_Speed(350, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > 6000 && cont_state.xadc < 3000 && cont_state.xadc > XPOSTHRESH)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(500, LEFT_FW_REG);
+        Motor_Change_Speed(300, RIGHT_FW_REG);
+    }
+
+    //Top Left
+    else if(cont_state.yadc > 6000 && cont_state.xadc < -6000)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(400, LEFT_FW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > 6000 && cont_state.xadc < -3000 && cont_state.xadc > -6000)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(350, LEFT_FW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+    else if(cont_state.yadc > 6000 && cont_state.xadc < XNEGTHRESH && cont_state.xadc > -3000)
+    {
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+        Motor_Change_Speed(300, LEFT_FW_REG);
+        Motor_Change_Speed(500, RIGHT_FW_REG);
+    }
+
+//    //Bottom Right
+//    else if(cont_state.yadc < -6000 && cont_state.xadc < -6000 )
+//    {
+//        Motor_Change_Speed(500, LEFT_BW_REG);
+//        Motor_Change_Speed(400, RIGHT_BW_REG);
+//        Motor_Change_Speed(0, LEFT_FW_REG);
+//        Motor_Change_Speed(0, RIGHT_FW_REG);
+//    }
+//    else if(cont_state.yadc < -6000 && cont_state.xadc <  )
+//    {
+//        Motor_Change_Speed(500, LEFT_BW_REG);
+//        Motor_Change_Speed(400, RIGHT_BW_REG);
+//        Motor_Change_Speed(0, LEFT_FW_REG);
+//        Motor_Change_Speed(0, RIGHT_FW_REG);
+//    }
+
+    else
+    {
+        Motor_Change_Speed(0, LEFT_FW_REG);
+        Motor_Change_Speed(0, RIGHT_FW_REG);
+        Motor_Change_Speed(0, LEFT_BW_REG);
+        Motor_Change_Speed(0, RIGHT_BW_REG);
+    }
+}
+
